@@ -132,13 +132,14 @@ with tab_schedule:
             col.caption(label)
         st.divider()
 
-        for pet, task in view:
+        for idx, (pet, task) in enumerate(view):
             is_conflicted = any((w.task_a is task or w.task_b is task) for w in conflicts)
             c_done, c_pri, c_time, c_pet, c_desc, c_freq, c_due = st.columns([1, 1, 2, 2, 4, 2, 2])
 
             with c_done:
-                cb_key = f"cb_{pet.name}_{task.description}_{task.due_date}"
-                done = st.checkbox("", value=task.completed, key=cb_key)
+                cb_key = f"cb_{idx}_{pet.name}_{task.description}_{task.due_date}"
+                done = st.checkbox("Done", value=task.completed, key=cb_key,
+                                   label_visibility="collapsed")
                 if done and not task.completed:
                     scheduler.mark_task_complete(pet.name, task.description)
                     owner.save_to_json(DATA_FILE)   # auto-save on completion
