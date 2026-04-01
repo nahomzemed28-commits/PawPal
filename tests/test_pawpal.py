@@ -1,5 +1,6 @@
 """Automated tests for PawPal+ core logic."""
 
+from datetime import date, timedelta
 import pytest
 from pawpal_system import Task, Pet, Owner, Scheduler
 
@@ -20,6 +21,31 @@ def test_task_reset_clears_completion():
     task.mark_complete()
     task.reset()
     assert task.completed is False
+
+
+def test_next_occurrence_daily():
+    """next_occurrence() for a daily task should return a task due tomorrow."""
+    today = date.today()
+    task = Task("Walk", "07:00", "daily", due_date=today)
+    next_task = task.next_occurrence()
+    assert next_task is not None
+    assert next_task.due_date == today + timedelta(days=1)
+    assert next_task.completed is False
+
+
+def test_next_occurrence_weekly():
+    """next_occurrence() for a weekly task should return a task due in 7 days."""
+    today = date.today()
+    task = Task("Meds", "08:00", "weekly", due_date=today)
+    next_task = task.next_occurrence()
+    assert next_task is not None
+    assert next_task.due_date == today + timedelta(days=7)
+
+
+def test_next_occurrence_once_returns_none():
+    """next_occurrence() for a 'once' task should return None (no recurrence)."""
+    task = Task("Vet visit", "10:00", "once")
+    assert task.next_occurrence() is None
 
 
 # ── Pet tests ────────────────────────────────────────────────────────────────
@@ -49,39 +75,107 @@ def test_get_pending_tasks_excludes_completed():
 
 # ── Scheduler tests ──────────────────────────────────────────────────────────
 
+def _make_scheduler(*pets):
+    """Helper: create an Owner + Scheduler with the given pets."""
+    owner = Owner("Test Owner", "test@test.com")
+    for pet in pets:
+        owner.add_pet(pet)
+    return Scheduler(owner)
+
+
 def test_schedule_sorted_by_time():
     """get_todays_schedule() should return tasks in chronological order."""
-    owner = Owner("Test Owner", "test@test.com")
     pet = Pet("Buddy", "Dog", 1)
     pet.add_task(Task("Evening walk", "18:00", "daily"))
     pet.add_task(Task("Morning walk", "07:00", "daily"))
-    owner.add_pet(pet)
-    scheduler = Scheduler(owner)
-    schedule = scheduler.get_todays_schedule()
-    times = [task.time for _, task in schedule]
+    scheduler = _make_scheduler(pet)
+    times = [task.time for _, task in scheduler.get_todays_schedule()]
     assert times == sorted(times)
+
+
+def test_filter_by_pet_returns_only_that_pet():
+    """filter_by_pet() should return only tasks belonging to the named pet."""
+    luna = Pet("Luna", "Dog", 3)
+    mochi = Pet("Mochi", "Cat", 5)
+    luna.add_task(Task("Walk", "07:00", "daily"))
+    mochi.add_task(Task("Playtime", "12:00", "daily"))
+    scheduler = _make_scheduler(luna, mochi)
+    result = scheduler.filter_by_pet("Luna")
+    assert all(pet.name == "Luna" for pet, _ in result)
+    assert len(result) == 1
+
+
+def test_filter_by_status_pending():
+    """filter_by_status(completed=False) should return only incomplete tasks."""
+    pet = Pet("Buddy", "Dog", 1)
+    t1 = Task("Walk", "07:00", "daily")
+    t2 = Task("Feeding", "08:00", "daily")
+    pet.add_task(t1)
+    pet.add_task(t2)
+    t1.mark_complete()
+    scheduler = _make_scheduler(pet)
+    pending = scheduler.filter_by_status(completed=False)
+    assert all(not task.completed for _, task in pending)
+    assert len(pending) == 1
+
+
+def test_filter_by_frequency():
+    """filter_by_frequency('weekly') should return only weekly tasks."""
+    pet = Pet("Buddy", "Dog", 1)
+    pet.add_task(Task("Walk", "07:00", "daily"))
+    pet.add_task(Task("Meds", "08:00", "weekly"))
+    scheduler = _make_scheduler(pet)
+    result = scheduler.filter_by_frequency("weekly")
+    assert all(task.frequency == "weekly" for _, task in result)
+    assert len(result) == 1
 
 
 def test_detect_conflicts_finds_same_time():
     """detect_conflicts() should flag tasks scheduled at the exact same time."""
-    owner = Owner("Test Owner", "test@test.com")
     pet = Pet("Buddy", "Dog", 1)
     pet.add_task(Task("Medication", "08:00", "daily"))
     pet.add_task(Task("Feeding", "08:00", "daily"))
-    owner.add_pet(pet)
-    scheduler = Scheduler(owner)
+    scheduler = _make_scheduler(pet)
     conflicts = scheduler.detect_conflicts()
     assert len(conflicts) > 0
 
 
+def test_detect_conflicts_no_false_positives():
+    """detect_conflicts() should return no conflicts when all tasks are at different times."""
+    pet = Pet("Buddy", "Dog", 1)
+    pet.add_task(Task("Walk", "07:00", "daily"))
+    pet.add_task(Task("Feeding", "08:00", "daily"))
+    pet.add_task(Task("Playtime", "12:00", "daily"))
+    scheduler = _make_scheduler(pet)
+    assert scheduler.detect_conflicts() == []
+
+
 def test_mark_task_complete_via_scheduler():
-    """Scheduler.mark_task_complete() should return True and update the task."""
-    owner = Owner("Test Owner", "test@test.com")
+    """Scheduler.mark_task_complete() should return True and mark the task done."""
     pet = Pet("Buddy", "Dog", 1)
     task = Task("Morning walk", "07:00", "daily")
     pet.add_task(task)
-    owner.add_pet(pet)
-    scheduler = Scheduler(owner)
+    scheduler = _make_scheduler(pet)
     result = scheduler.mark_task_complete("Buddy", "Morning walk")
     assert result is True
     assert task.completed is True
+
+
+def test_recurring_task_appends_next_occurrence():
+    """Completing a daily task via the Scheduler should add a new pending task for tomorrow."""
+    pet = Pet("Buddy", "Dog", 1)
+    pet.add_task(Task("Walk", "07:00", "daily"))
+    scheduler = _make_scheduler(pet)
+    scheduler.mark_task_complete("Buddy", "Walk")
+    assert len(pet.tasks) == 2
+    assert pet.tasks[-1].completed is False
+    assert pet.tasks[-1].due_date == date.today() + timedelta(days=1)
+
+
+def test_once_task_does_not_recur():
+    """Completing a 'once' task via the Scheduler should NOT add a new task."""
+    pet = Pet("Buddy", "Dog", 1)
+    pet.add_task(Task("Vet visit", "10:00", "once"))
+    scheduler = _make_scheduler(pet)
+    scheduler.mark_task_complete("Buddy", "Vet visit")
+    assert len(pet.tasks) == 1

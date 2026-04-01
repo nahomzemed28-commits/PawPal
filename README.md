@@ -38,6 +38,15 @@ PawPal/
 └── reflection.md       # Design reflection and learnings
 ```
 
+## Smarter Scheduling
+
+PawPal+ includes algorithmic intelligence built into the `Scheduler` class:
+
+- **Sorting** — `get_todays_schedule()` sorts all tasks chronologically using Python's `sorted()` with a `lambda` key on the `"HH:MM"` time string. Tasks can be added in any order and will always display correctly.
+- **Filtering** — Tasks can be filtered by pet name (`filter_by_pet()`), completion status (`filter_by_status()`), or recurrence frequency (`filter_by_frequency()`), all returning sorted results.
+- **Recurring tasks** — Completing a `daily`, `weekly`, or `monthly` task via `mark_task_complete()` automatically appends the next occurrence using Python's `timedelta`. `once` tasks do not recur.
+- **Conflict detection** — `detect_conflicts()` groups tasks by time slot and returns `ConflictWarning` objects for any slot with more than one task. It returns warnings instead of raising exceptions, so the app never crashes on scheduling issues.
+
 ## Getting Started
 
 ### Phase 1: System Design with UML + AI Support
